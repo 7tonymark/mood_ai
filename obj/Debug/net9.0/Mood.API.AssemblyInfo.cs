@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Mood.API")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+65537e5ea6410583ce1eb63e55cf9735ba29c2b6")]
 [assembly: System.Reflection.AssemblyProductAttribute("Mood.API")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Mood.API")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
