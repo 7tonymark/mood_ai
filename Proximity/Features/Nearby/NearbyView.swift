@@ -27,11 +27,11 @@ struct NearbyView: View {
     }
 
     private func start() {
-        guard handshake == nil, let profile = model.profile else { return }
-        let session = NearbyHandshake(myCard: profile.card)
-        session.onFriendAdded = { card in
-            let result = model.addFriend(card, via: .bluetooth)
-            celebration = (card, result)
+        guard handshake == nil, let identity = model.identity, let card = model.myCard else { return }
+        let session = NearbyHandshake(identity: identity, card: card)
+        session.onFriendAdded = { introduction in
+            let result = model.addFriend(introduction, via: .bluetooth)
+            celebration = (introduction.card, result)
         }
         session.start()
         handshake = session

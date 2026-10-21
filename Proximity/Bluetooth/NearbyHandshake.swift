@@ -4,9 +4,9 @@ import Observation
 
 enum BLE {
     static let service = CBUUID(string: "6E2B0001-6B5F-4C7A-9C1E-2F8A3D4B5C60")
-    /// Readable: the advertising phone's `PlayerCard`.
-    static let cardCharacteristic = CBUUID(string: "6E2B0002-6B5F-4C7A-9C1E-2F8A3D4B5C60")
-    /// Writable: a visitor writes *their* card here to say "I accept you".
+    /// Readable: the advertising phone's `Hello` (signed card + session nonce).
+    static let helloCharacteristic = CBUUID(string: "6E2B0002-6B5F-4C7A-9C1E-2F8A3D4B5C60")
+    /// Writable: a visitor writes a signed `AcceptMessage` here to say "I accept you".
     static let acceptCharacteristic = CBUUID(string: "6E2B0003-6B5F-4C7A-9C1E-2F8A3D4B5C60")
 
     /// Phones weaker than this are ignored entirely; we don't even connect.
@@ -21,7 +21,7 @@ enum BLE {
     static func bars(for rssi: Int?) -> Int {
         guard let rssi else { return 0 }
         switch rssi {
-        case -55...: return 5
+        case (-55)...: return 5
         case -65 ..< -55: return 4
         case -72 ..< -65: return 3
         case -79 ..< -72: return 2
@@ -33,10 +33,11 @@ enum BLE {
 
 /// Finds nearby players and runs the mutual-accept handshake over Bluetooth Low Energy.
 ///
-/// Every phone on the "Add player" screen is both a peripheral (advertising its card) and a
-/// central (scanning for others). Tapping ADD writes my card to the other phone; once both
-/// phones have written to each other, each side saves the friendship on its own.
-/// Nothing runs in the background: the radio is only on while that screen is open.
+/// Every phone on the "Add player" screen is both a peripheral (serving its `Hello`) and a
+/// central (scanning for others). Tapping ADD writes a signed `AcceptMessage`, bound to the other
+/// phone's nonce, to that phone. Once both phones have accepted each other, each side saves the
+/// friendship on its own. Nothing runs in the background: the radio is only on while the
+/// screen is open, and a new nonce is made every time it opens.
 @Observable
 final class NearbyHandshake: NSObject {
     enum Status: Equatable {
@@ -59,10 +60,12 @@ final class NearbyHandshake: NSObject {
     private(set) var status: Status = .starting
     private(set) var peers: [Peer] = []
 
-    @ObservationIgnored var onFriendAdded: ((PlayerCard) -> Void)?
+    @ObservationIgnored var onFriendAdded: ((Introduction) -> Void)?
 
+    @ObservationIgnored private let identity: Identity
     @ObservationIgnored private let myCard: PlayerCard
-    @ObservationIgnored private let cardData: Data
+    @ObservationIgnored private let hello: Hello
+    @ObservationIgnored private let helloData: Data
     @ObservationIgnored private var central: CBCentralManager?
     @ObservationIgnored private var advertiser: CBPeripheralManager?
     @ObservationIgnored private var ledger = HandshakeLedger()
@@ -76,13 +79,17 @@ final class NearbyHandshake: NSObject {
     private struct Link {
         let peripheral: CBPeripheral
         let startedAt = Date()
-        var playerID: UUID?
+        /// What they served us: their verified card and this session's nonce.
+        var hello: Hello?
         var accept: CBCharacteristic?
     }
 
-    init(myCard: PlayerCard) {
-        self.myCard = myCard
-        self.cardData = myCard.encoded()
+    init(identity: Identity, card: PlayerCard) {
+        let hello = Hello(card: card, nonce: Hello.newNonce())
+        self.identity = identity
+        self.myCard = card
+        self.hello = hello
+        self.helloData = hello.encoded
         super.init()
     }
 
@@ -111,14 +118,16 @@ final class NearbyHandshake: NSObject {
         advertiser = nil
     }
 
-    /// Sends my card to a nearby player. Ignored unless they're close enough.
+    /// Sends my signed acceptance to a nearby player. Ignored unless they're close enough.
     func accept(_ playerID: UUID) {
         guard let reading = signal[playerID], reading.rssi >= BLE.closeRSSI,
-              let link = links.values.first(where: { $0.playerID == playerID }),
+              let link = links.values.first(where: { $0.hello?.card.id == playerID }),
+              let peerHello = link.hello,
               let characteristic = link.accept,
-              !sending.contains(playerID) else { return }
+              !sending.contains(playerID),
+              let message = try? AcceptMessage.make(identity: identity, card: myCard, to: peerHello) else { return }
         sending.insert(playerID)
-        link.peripheral.writeValue(cardData, for: characteristic, type: .withResponse)
+        link.peripheral.writeValue(message, for: characteristic, type: .withResponse)
         rebuild()
     }
 
@@ -130,8 +139,8 @@ final class NearbyHandshake: NSObject {
             if link.peripheral.state == .connected {
                 link.peripheral.readRSSI()
             }
-            // Drop attempts that never got as far as reading a card; the next advertisement retries.
-            if link.playerID == nil, now.timeIntervalSince(link.startedAt) > BLE.connectTimeout {
+            // Drop attempts that never got as far as reading a Hello; the next advertisement retries.
+            if link.hello == nil, now.timeIntervalSince(link.startedAt) > BLE.connectTimeout {
                 central?.cancelPeripheralConnection(link.peripheral)
                 links[id] = nil
             }
@@ -146,14 +155,14 @@ final class NearbyHandshake: NSObject {
         rebuild()
     }
 
-    private func complete(_ card: PlayerCard) {
+    private func complete(_ introduction: Introduction) {
         Haptics.success()
-        onFriendAdded?(card)
+        onFriendAdded?(introduction)
     }
 
     private func rebuild() {
         let now = Date()
-        let writable = Set(links.values.compactMap { $0.accept != nil ? $0.playerID : nil })
+        let writable = Set(links.values.compactMap { $0.accept != nil ? $0.hello?.card.id : nil })
         peers = ledger.entries.compactMap { element -> Peer? in
             let (id, entry) = element
             let reading = signal[id]
@@ -205,7 +214,7 @@ extension NearbyHandshake: CBCentralManagerDelegate {
         let rssi = RSSI.intValue
         guard rssi < 0, rssi >= BLE.connectRSSI else { return }
         if let link = links[peripheral.identifier] {
-            if let playerID = link.playerID {
+            if let playerID = link.hello?.card.id {
                 record(rssi: rssi, for: playerID)
             }
         } else {
@@ -224,7 +233,7 @@ extension NearbyHandshake: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        if let playerID = links[peripheral.identifier]?.playerID {
+        if let playerID = links[peripheral.identifier]?.hello?.card.id {
             sending.remove(playerID)
         }
         // Forgetting the link lets the next advertisement reconnect.
@@ -239,13 +248,13 @@ extension NearbyHandshake: CBPeripheralDelegate {
             central?.cancelPeripheralConnection(peripheral)
             return
         }
-        peripheral.discoverCharacteristics([BLE.cardCharacteristic, BLE.acceptCharacteristic], for: service)
+        peripheral.discoverCharacteristics([BLE.helloCharacteristic, BLE.acceptCharacteristic], for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         for characteristic in service.characteristics ?? [] {
             switch characteristic.uuid {
-            case BLE.cardCharacteristic:
+            case BLE.helloCharacteristic:
                 peripheral.readValue(for: characteristic)
             case BLE.acceptCharacteristic:
                 links[peripheral.identifier]?.accept = characteristic
@@ -257,30 +266,31 @@ extension NearbyHandshake: CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard characteristic.uuid == BLE.cardCharacteristic else { return }
+        guard characteristic.uuid == BLE.helloCharacteristic else { return }
+        // Hello.decode verifies the card's signature; forged or garbled cards never show up.
         guard error == nil, let data = characteristic.value,
-              let card = PlayerCard.decode(data), card.id != myCard.id else {
+              let theirHello = Hello.decode(data), theirHello.card.id != identity.id else {
             central?.cancelPeripheralConnection(peripheral)
             return
         }
-        links[peripheral.identifier]?.playerID = card.id
-        ledger.discovered(card)
+        links[peripheral.identifier]?.hello = theirHello
+        ledger.discovered(theirHello.card)
         peripheral.readRSSI()
         rebuild()
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         guard characteristic.uuid == BLE.acceptCharacteristic,
-              let playerID = links[peripheral.identifier]?.playerID else { return }
+              let playerID = links[peripheral.identifier]?.hello?.card.id else { return }
         sending.remove(playerID)
-        if error == nil, let card = ledger.markIAccepted(playerID) {
-            complete(card)
+        if error == nil, let introduction = ledger.markIAccepted(playerID) {
+            complete(introduction)
         }
         rebuild()
     }
 
     func peripheral(_ peripheral: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
-        guard error == nil, let playerID = links[peripheral.identifier]?.playerID else { return }
+        guard error == nil, let playerID = links[peripheral.identifier]?.hello?.card.id else { return }
         record(rssi: RSSI.intValue, for: playerID)
     }
 }
@@ -290,34 +300,34 @@ extension NearbyHandshake: CBPeripheralDelegate {
 extension NearbyHandshake: CBPeripheralManagerDelegate {
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
         guard peripheral.state == .poweredOn else { return }
-        let card = CBMutableCharacteristic(
-            type: BLE.cardCharacteristic, properties: [.read], value: nil, permissions: [.readable]
+        let helloCharacteristic = CBMutableCharacteristic(
+            type: BLE.helloCharacteristic, properties: [.read], value: nil, permissions: [.readable]
         )
-        let accept = CBMutableCharacteristic(
+        let acceptCharacteristic = CBMutableCharacteristic(
             type: BLE.acceptCharacteristic, properties: [.write], value: nil, permissions: [.writeable]
         )
         let service = CBMutableService(type: BLE.service, primary: true)
-        service.characteristics = [card, accept]
+        service.characteristics = [helloCharacteristic, acceptCharacteristic]
         peripheral.removeAllServices()
         peripheral.add(service)
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
         guard error == nil else { return }
-        // Only the service UUID is advertised. Names and ids are shared over a connection.
+        // Only the service UUID is advertised. Cards are shared over a connection.
         peripheral.startAdvertising([CBAdvertisementDataServiceUUIDsKey: [BLE.service]])
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
-        guard request.characteristic.uuid == BLE.cardCharacteristic else {
+        guard request.characteristic.uuid == BLE.helloCharacteristic else {
             peripheral.respond(to: request, withResult: .requestNotSupported)
             return
         }
-        guard request.offset <= cardData.count else {
+        guard request.offset <= helloData.count else {
             peripheral.respond(to: request, withResult: .invalidOffset)
             return
         }
-        request.value = cardData.subdata(in: request.offset..<cardData.count)
+        request.value = helloData.subdata(in: request.offset..<helloData.count)
         peripheral.respond(to: request, withResult: .success)
     }
 
@@ -334,12 +344,14 @@ extension NearbyHandshake: CBPeripheralManagerDelegate {
                 data.append(value)
             }
         }
-        guard let card = PlayerCard.decode(data), card.id != myCard.id else {
+        // Checks the signature, that it's addressed to me, and that it carries this session's nonce.
+        guard let introduction = AcceptMessage.open(data, identity: identity, myNonce: hello.nonce),
+              introduction.card.id != identity.id else {
             peripheral.respond(to: first, withResult: .unlikelyError)
             return
         }
         peripheral.respond(to: first, withResult: .success)
-        if let completed = ledger.markTheyAccepted(card) {
+        if let completed = ledger.markTheyAccepted(introduction) {
             complete(completed)
         }
         rebuild()

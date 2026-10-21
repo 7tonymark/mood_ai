@@ -23,6 +23,37 @@ enum Arcade {
             ? .custom(fontName, size: size)
             : .system(size: size * 1.2, weight: .heavy, design: .monospaced)
     }
+
+    /// For what people write. The pixel font has no emoji or accents, so posts and chats use
+    /// a monospaced system font that keeps the terminal feel and can draw every language.
+    static func body(_ size: CGFloat = 15) -> Font {
+        .system(size: size, weight: .medium, design: .monospaced)
+    }
+
+    /// "NOW", "5M", "3H", "2D", then a date: like a high-score table, not a calendar.
+    static func shortTime(_ date: Date, now: Date = .now) -> String {
+        let seconds = max(0, now.timeIntervalSince(date))
+        switch seconds {
+        case ..<60: return "NOW"
+        case ..<3600: return "\(Int(seconds / 60))M"
+        case ..<86_400: return "\(Int(seconds / 3600))H"
+        case ..<604_800: return "\(Int(seconds / 86_400))D"
+        default: return date.formatted(.dateTime.month(.twoDigits).day(.twoDigits))
+        }
+    }
+}
+
+extension PlayerColor {
+    var color: Color {
+        switch self {
+        case .cyan: Arcade.cyan
+        case .magenta: Arcade.magenta
+        case .yellow: Arcade.yellow
+        case .green: Arcade.green
+        case .orange: Arcade.orange
+        case .red: Arcade.red
+        }
+    }
 }
 
 extension View {

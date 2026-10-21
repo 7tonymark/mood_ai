@@ -1,34 +1,44 @@
 import SwiftUI
 
 /// The friend list, styled as a high-score table.
-struct HomeView: View {
+struct PlayersView: View {
+    var onChat: (UUID) -> Void
+
     @Environment(AppModel.self) private var model
     @State private var showNearby = false
     @State private var showQR = false
-    @State private var editingProfile = false
     @State private var pendingRemoval: Friend?
 
     var body: some View {
-        ArcadeScreen {
-            header
+        VStack(spacing: 12) {
+            HStack {
+                Text("FRIENDS ARE ADDED IN PERSON ONLY")
+                    .font(Arcade.font(7))
+                    .foregroundStyle(Arcade.dim)
+                Spacer()
+                Text(String(format: "%03d/%d", model.friends.count, AppModel.maxFriends))
+                    .font(Arcade.font(9))
+                    .foregroundStyle(Arcade.green)
+                    .accessibilityLabel("\(model.friends.count) of \(AppModel.maxFriends) friends")
+            }
+
             if model.friends.isEmpty {
                 emptyState
             } else {
                 roster
             }
+
             HStack(spacing: 12) {
                 Button("+ ADD PLAYER") { showNearby = true }
-                    .buttonStyle(.arcade(Arcade.magenta))
+                    .buttonStyle(.arcade(Arcade.magenta, size: 11))
                 Button("QR") { showQR = true }
-                    .buttonStyle(.arcade(Arcade.cyan, filled: false))
-                    .frame(width: 96)
+                    .buttonStyle(.arcade(Arcade.cyan, filled: false, size: 11))
+                    .frame(width: 88)
             }
             .disabled(model.friends.count >= AppModel.maxFriends)
-            .padding(.bottom, 6)
         }
         .fullScreenCover(isPresented: $showNearby) { NearbyView() }
         .fullScreenCover(isPresented: $showQR) { QRExchangeView() }
-        .fullScreenCover(isPresented: $editingProfile) { ProfileSetupView(mode: .edit) }
         .confirmationDialog(
             "Remove \(pendingRemoval?.name ?? "")?",
             isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
@@ -37,46 +47,7 @@ struct HomeView: View {
         ) { friend in
             Button("Remove", role: .destructive) { model.removeFriend(friend.id) }
         } message: { _ in
-            Text("You'll have to meet in person again to re-add them.")
-        }
-    }
-
-    private var header: some View {
-        VStack(spacing: 14) {
-            HStack(alignment: .center) {
-                Button { editingProfile = true } label: {
-                    HStack(spacing: 10) {
-                        if let profile = model.profile {
-                            PixelAvatarView(avatar: profile.avatar, color: profile.color.color, size: 28)
-                            Text(profile.name)
-                                .font(Arcade.font(10))
-                                .foregroundStyle(profile.color.color)
-                                .lineLimit(1)
-                        }
-                    }
-                    .padding(10)
-                    .pixelPanel(model.profile?.color.color ?? Arcade.cyan)
-                }
-                .accessibilityLabel("Edit your player")
-                Spacer()
-                Text(String(format: "%03d/%d", model.friends.count, AppModel.maxFriends))
-                    .font(Arcade.font(10))
-                    .foregroundStyle(Arcade.green)
-                    .accessibilityLabel("\(model.friends.count) of \(AppModel.maxFriends) friends")
-            }
-            .padding(.top, 8)
-
-            Text("PLAYERS")
-                .font(Arcade.font(24))
-                .foregroundStyle(Arcade.yellow)
-                .neon(Arcade.yellow)
-
-            if let warning = model.cloudWarning {
-                Text(warning)
-                    .font(Arcade.font(8))
-                    .foregroundStyle(Arcade.orange)
-                    .multilineTextAlignment(.center)
-            }
+            Text("Their posts and your chat disappear from your phone, and you disappear from theirs. You'll have to meet in person to re-add each other.")
         }
     }
 
@@ -94,10 +65,14 @@ struct HomeView: View {
                 .padding(.horizontal, 12)
 
                 ForEach(Array(model.friends.enumerated()), id: \.element.id) { index, friend in
-                    FriendRow(rank: index + 1, friend: friend)
-                        .contextMenu {
-                            Button("Remove", systemImage: "trash", role: .destructive) { pendingRemoval = friend }
-                        }
+                    Button { onChat(friend.id) } label: {
+                        FriendRow(rank: index + 1, friend: friend)
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Chat", systemImage: "bubble.left") { onChat(friend.id) }
+                        Button("Remove", systemImage: "trash", role: .destructive) { pendingRemoval = friend }
+                    }
                 }
             }
             .padding(.vertical, 8)
@@ -114,7 +89,7 @@ struct HomeView: View {
             Text("NO PLAYERS YET")
                 .font(Arcade.font(14))
                 .foregroundStyle(Arcade.ink)
-            Text("FRIENDS CAN ONLY BE ADDED IN PERSON.\n\nFIND SOMEONE, HOLD YOUR PHONES TOGETHER AND PRESS ADD PLAYER.")
+            Text("FIND SOMEONE, HOLD YOUR PHONES TOGETHER AND PRESS ADD PLAYER.")
                 .font(Arcade.font(9))
                 .foregroundStyle(Arcade.cyan)
                 .multilineTextAlignment(.center)
@@ -161,6 +136,7 @@ private struct FriendRow: View {
         .pixelPanel(friend.color.color.opacity(0.8))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(friend.name), met \(friend.addedAt.formatted(date: .abbreviated, time: .omitted))")
+        .accessibilityHint("Opens your chat")
     }
 
     static func ordinal(_ n: Int) -> String {

@@ -31,16 +31,20 @@ targets:
         UIRequiredDeviceCapabilities:
           - bluetooth-le
         NSBluetoothAlwaysUsageDescription: Proximity uses Bluetooth to find people standing right next to you, so you can only add friends you've actually met.
-        NSCameraUsageDescription: The camera scans a friend's QR code when you add them in person.
+        # There is deliberately no NSPhotoLibraryUsageDescription: the app never touches the
+        # photo library. Photos can only be taken live, in the app's own camera.
+        NSCameraUsageDescription: Proximity uses the camera to scan friend codes and to take photos on the spot. It never opens your photo library.
     entitlements:
       path: Proximity/Proximity.entitlements
       properties:
-        # CloudKit needs a paid developer account. With a free account, delete these
-        # two keys and remove CLOUDKIT from SWIFT_ACTIVE_COMPILATION_CONDITIONS below.
+        # iCloud and push need a paid developer account. With a free account, delete these
+        # three keys and remove CLOUDKIT from SWIFT_ACTIVE_COMPILATION_CONDITIONS below; the
+        # app then runs offline (handshakes work, but nothing leaves the phone).
         com.apple.developer.icloud-container-identifiers:
           - iCloud.$(PRODUCT_BUNDLE_IDENTIFIER)
         com.apple.developer.icloud-services:
           - CloudKit
+        aps-environment: development
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.proximity

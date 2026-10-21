@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The fallback for when Bluetooth won't cooperate: both players scan each other's code.
-/// Codes expire within a minute, so a screenshot sent from far away is useless.
+/// Codes are signed and expire within a minute, so a screenshot sent from far away is useless.
 struct QRExchangeView: View {
     private enum Tab {
         case show, scan
@@ -10,7 +10,7 @@ struct QRExchangeView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var tab: Tab = .show
-    @State private var scanned: PlayerCard?
+    @State private var scanned: Introduction?
     @State private var scanError: String?
     @State private var cameraError: String?
     @State private var celebration: (card: PlayerCard, result: AppModel.AddResult)?
@@ -31,8 +31,8 @@ struct QRExchangeView: View {
 
             switch tab {
             case .show:
-                if let profile = model.profile {
-                    MyCodeView(card: profile.card)
+                if let identity = model.identity, let card = model.myCard {
+                    MyCodeView(identity: identity, card: card)
                 }
             case .scan:
                 scanner
@@ -80,21 +80,22 @@ struct QRExchangeView: View {
     private func handle(_ code: String) {
         guard scanned == nil, celebration == nil else { return }
         switch QRPayload.parse(code) {
-        case .success(let card):
+        case .success(let introduction):
             scanError = nil
             Haptics.tick()
-            scanned = card
+            scanned = introduction
         case .failure(.expired):
             scanError = "CODE EXPIRED.\nASK FOR A FRESH ONE."
             Haptics.error()
         case .failure:
-            scanError = "NOT A PROXIMITY CODE"
+            scanError = "NOT A VALID PROXIMITY CODE"
             Haptics.error()
         }
     }
 
-    private func confirm(_ card: PlayerCard) -> some View {
-        ZStack {
+    private func confirm(_ introduction: Introduction) -> some View {
+        let card = introduction.card
+        return ZStack {
             Color.black.opacity(0.8).ignoresSafeArea()
             VStack(spacing: 20) {
                 Text("ADD PLAYER?")
@@ -105,11 +106,14 @@ struct QRExchangeView: View {
                 Text(card.name)
                     .font(Arcade.font(14))
                     .foregroundStyle(card.color.color)
+                Text("SIGNATURE VERIFIED")
+                    .font(Arcade.font(7))
+                    .foregroundStyle(Arcade.green)
                 HStack(spacing: 12) {
                     Button("NO") { scanned = nil }
                         .buttonStyle(.arcade(Arcade.red, filled: false))
                     Button("YES") {
-                        let result = model.addFriend(card, via: .qr)
+                        let result = model.addFriend(introduction, via: .qr)
                         if result == .added { Haptics.success() }
                         scanned = nil
                         celebration = (card, result)
@@ -124,15 +128,33 @@ struct QRExchangeView: View {
     }
 }
 
+/// Re-signing every second would give a different (randomized) signature each time and make
+/// the code flicker, so a signed code is made once per window and reused until it rolls over.
+private final class QRCodeCache {
+    private var window: TimeInterval = -1
+    private var code = ""
+
+    func code(identity: Identity, card: PlayerCard, now: Date) -> String {
+        let current = QRPayload.windowStart(for: now)
+        if current != window {
+            window = current
+            code = (try? QRPayload.make(identity: identity, card: card, now: now)) ?? ""
+        }
+        return code
+    }
+}
+
 private struct MyCodeView: View {
+    var identity: Identity
     var card: PlayerCard
+    @State private var cache = QRCodeCache()
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            let payload = QRPayload.current(for: card, now: context.date)
-            let remaining = payload.exp.timeIntervalSince(context.date) - QRPayload.grace
+            let code = cache.code(identity: identity, card: card, now: context.date)
+            let remaining = QRPayload.windowStart(for: context.date) + QRPayload.window - context.date.timeIntervalSince1970
             VStack(spacing: 14) {
-                QRImage(string: payload.string())
+                QRImage(string: code)
                     .padding(14)
                     .background(Color.white)
                     .clipShape(PixelRect())

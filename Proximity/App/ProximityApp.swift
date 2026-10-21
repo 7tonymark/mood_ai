@@ -1,8 +1,14 @@
 import SwiftUI
 
 @main
+@MainActor
 struct ProximityApp: App {
-    @State private var model = AppModel()
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @State private var model = AppModel(
+        store: LocalStore(),
+        backend: Platform.makeBackend(),
+        identityStore: KeychainIdentityStore()
+    )
 
     var body: some Scene {
         WindowGroup {
@@ -23,10 +29,12 @@ struct RootView: View {
             switch model.phase {
             case .loading:
                 BootView()
+            case .restore:
+                RestoreView()
             case .setup:
                 ProfileSetupView(mode: .create)
             case .ready:
-                HomeView()
+                MainView()
             }
         }
         .task { await model.boot() }

@@ -10,3 +10,8 @@ build/
 *.xcresult
 
 .DS_Store
+
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved

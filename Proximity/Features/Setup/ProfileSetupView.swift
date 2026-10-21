@@ -128,7 +128,6 @@ struct ProfileSetupView: View {
         guard !trimmedName.isEmpty else { return }
         nameFocused = false
         let profile = Profile(
-            id: model.profile?.id ?? UUID(),
             name: trimmedName,
             color: color,
             avatar: avatar.isEmpty ? .invader : avatar
