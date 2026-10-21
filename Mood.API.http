@@ -1,6 +1,0 @@
-@Mood.API_HostAddress = http://localhost:5109
-
-GET {{Mood.API_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###

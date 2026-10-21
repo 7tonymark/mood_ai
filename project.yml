@@ -1,0 +1,68 @@
+# Generate the Xcode project with:  xcodegen generate
+name: Proximity
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Set your Apple developer team here (or pick it in Xcode → Signing & Capabilities).
+    DEVELOPMENT_TEAM: ""
+targets:
+  Proximity:
+    type: application
+    platform: iOS
+    sources:
+      - path: Proximity
+    info:
+      path: Proximity/Info.plist
+      properties:
+        CFBundleDisplayName: Proximity
+        UILaunchScreen: {}
+        UIAppFonts:
+          - PressStart2P-Regular.ttf
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIUserInterfaceStyle: Dark
+        UIRequiredDeviceCapabilities:
+          - bluetooth-le
+        NSBluetoothAlwaysUsageDescription: Proximity uses Bluetooth to find people standing right next to you, so you can only add friends you've actually met.
+        # There is deliberately no NSPhotoLibraryUsageDescription: the app never touches the
+        # photo library. Photos can only be taken live, in the app's own camera.
+        NSCameraUsageDescription: Proximity uses the camera to scan friend codes and to take photos on the spot. It never opens your photo library.
+    entitlements:
+      path: Proximity/Proximity.entitlements
+      properties:
+        # iCloud and push need a paid developer account. With a free account, delete these
+        # three keys and remove CLOUDKIT from SWIFT_ACTIVE_COMPILATION_CONDITIONS below; the
+        # app then runs offline (handshakes work, but nothing leaves the phone).
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.$(PRODUCT_BUNDLE_IDENTIFIER)
+        com.apple.developer.icloud-services:
+          - CloudKit
+        aps-environment: development
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.proximity
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) CLOUDKIT
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  ProximityTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: ProximityTests
+    dependencies:
+      - target: Proximity
+schemes:
+  Proximity:
+    build:
+      targets:
+        Proximity: all
+    test:
+      targets:
+        - ProximityTests
